@@ -24,8 +24,7 @@ module user_domain import user_pkg::*; import croc_pkg::*; #(
   output logic [NumExternalIrqs-1:0] interrupts_o    // interrupts to core
 );
 
-  assign interrupts_o = '0;
-
+  logic sha256_irq;
 
   //////////////////////
   // User Manager MUX //
@@ -51,6 +50,10 @@ module user_domain import user_pkg::*; import croc_pkg::*; #(
   sbr_obi_req_t user_error_obi_req;
   sbr_obi_rsp_t user_error_obi_rsp;
 
+  // User ROM bus
+  sbr_obi_req_t user_rom_obi_req;
+  sbr_obi_rsp_t user_rom_obi_rsp;
+
   // OBI bus to your design
   sbr_obi_req_t user_design_obi_req;
   sbr_obi_rsp_t user_design_obi_rsp;
@@ -58,6 +61,8 @@ module user_domain import user_pkg::*; import croc_pkg::*; #(
   // Fanout into more readable signals
   assign user_error_obi_req               = all_user_sbr_obi_req[UserError];
   assign all_user_sbr_obi_rsp[UserError]  = user_error_obi_rsp;
+  assign user_rom_obi_req                 = all_user_sbr_obi_req[UserRom];
+  assign all_user_sbr_obi_rsp[UserRom]    = user_rom_obi_rsp;
   assign user_design_obi_req              = all_user_sbr_obi_req[UserDesign];
   assign all_user_sbr_obi_rsp[UserDesign] = user_design_obi_rsp;
 
@@ -108,20 +113,32 @@ module user_domain import user_pkg::*; import croc_pkg::*; #(
 //-------------------------------------------------------------------------------------------------
 
   ///////////////////////////////////
-  // Replace this with your Design //
+  // User ROM                      //
   ///////////////////////////////////
-  obi_err_sbr #(
-    .ObiCfg      ( SbrObiCfg     ),
-    .obi_req_t   ( sbr_obi_req_t ),
-    .obi_rsp_t   ( sbr_obi_rsp_t ),
-    .NumMaxTrans ( 1             ),
-    .RspData     ( 32'hBADCAB1E  )
-  ) i_your_design_goes_here (
+
+  user_rom #(
+    .obi_req_t ( sbr_obi_req_t ),
+    .obi_rsp_t ( sbr_obi_rsp_t )
+  ) i_user_rom (
     .clk_i,
     .rst_ni,
-    .testmode_i ( testmode_i          ),
-    .obi_req_i  ( user_design_obi_req ),
-    .obi_rsp_o  ( user_design_obi_rsp )
+    .obi_req_i ( user_rom_obi_req ),
+    .obi_rsp_o ( user_rom_obi_rsp )
+  );
+
+  ///////////////////////////////////
+  // SHA-256 Accelerator           //
+  ///////////////////////////////////
+
+  sha256_accel #(
+    .obi_req_t ( sbr_obi_req_t ),
+    .obi_rsp_t ( sbr_obi_rsp_t )
+  ) i_sha256_accel (
+    .clk_i,
+    .rst_ni,
+    .obi_req_i   ( user_design_obi_req ),
+    .obi_rsp_o   ( user_design_obi_rsp ),
+    .interrupt_o ( sha256_irq          )
   );
 
   // Error Subordinate
@@ -138,5 +155,10 @@ module user_domain import user_pkg::*; import croc_pkg::*; #(
     .obi_req_i  ( user_error_obi_req ),
     .obi_rsp_o  ( user_error_obi_rsp )
   );
+
+  always_comb begin
+    interrupts_o    = '0;
+    interrupts_o[0] = sha256_irq;
+  end
 
 endmodule
