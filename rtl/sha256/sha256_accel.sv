@@ -423,14 +423,10 @@ module sha256_accel #(
       obi_req_q      <= '0;
       err_q          <= '0;
       rdata_q        <= '0;
-      for (int unsigned i = 0; i < 16; ++i) begin
-        block_q[i] <= '0;
-        w_mem_q[i] <= '0;
-      end
-      for (int unsigned i = 0; i < 8; ++i) begin
-        digest_q[i] <= '0;
-        hash_state_q[i] <= '0;
-      end
+      block_q      <= '{default: '0};
+      w_mem_q      <= '{default: '0};
+      digest_q     <= '{default: '0};
+      hash_state_q <= '{default: '0};
     end else begin
       irq_enable_q   <= irq_enable_d;
       busy_q         <= busy_d;
@@ -451,14 +447,10 @@ module sha256_accel #(
       obi_req_q      <= obi_req_d;
       err_q          <= err_d;
       rdata_q        <= rdata_d;
-      for (int unsigned i = 0; i < 16; ++i) begin
-        block_q[i] <= block_d[i];
-        w_mem_q[i] <= w_mem_d[i];
-      end
-      for (int unsigned i = 0; i < 8; ++i) begin
-        digest_q[i] <= digest_d[i];
-        hash_state_q[i] <= hash_state_d[i];
-      end
+      block_q      <= block_d;
+      w_mem_q      <= w_mem_d;
+      digest_q     <= digest_d;
+      hash_state_q <= hash_state_d;
     end
   end
 

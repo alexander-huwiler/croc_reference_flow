@@ -164,6 +164,7 @@
 ../rtl/riscv-dbg/tb/jtag_test_simple.sv
 ../rtl/croc_pkg.sv
 ../rtl/user_pkg.sv
+../rtl/sha256/sha256_accel_pkg.sv
 ../rtl/soc_ctrl/soc_ctrl_regs_pkg.sv
 ../rtl/gpio/gpio_reg_pkg.sv
 ../rtl/clint/clint_reg_pkg.sv
@@ -175,6 +176,8 @@
 ../rtl/gpio/gpio.sv
 ../rtl/clint/clint.sv
 ../rtl/obi_timer/obi_timer.sv
+../rtl/user_rom.sv
+../rtl/sha256/sha256_accel.sv
 ../rtl/croc_domain.sv
 ../rtl/user_domain.sv
 ../rtl/croc_soc.sv

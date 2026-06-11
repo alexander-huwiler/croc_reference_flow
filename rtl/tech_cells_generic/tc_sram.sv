@@ -149,7 +149,13 @@ module tc_sram #(
               // update value when write is set at clock
               for (int unsigned j = 0; j < BeWidth; j++) begin
                 if (be_i[i][j]) begin
+`ifdef VERILATOR
+                  // Simulator workaround: keep this functional model writable in the
+                  // loop-based implementation while preserving read-before-write ordering.
+                  sram[addr_i[i]][j*ByteWidth+:ByteWidth] = wdata_i[i][j*ByteWidth+:ByteWidth];
+`else
                   sram[addr_i[i]][j*ByteWidth+:ByteWidth] <= wdata_i[i][j*ByteWidth+:ByteWidth];
+`endif
                 end
               end
             end else begin
@@ -190,7 +196,13 @@ module tc_sram #(
               // update value when write is set at clock
               for (int unsigned j = 0; j < BeWidth; j++) begin
                 if (be_i[i][j]) begin
+`ifdef VERILATOR
+                  // Simulator workaround: keep this functional model writable in the
+                  // loop-based implementation while preserving read-before-write ordering.
+                  sram[addr_i[i]][j*ByteWidth+:ByteWidth] = wdata_i[i][j*ByteWidth+:ByteWidth];
+`else
                   sram[addr_i[i]][j*ByteWidth+:ByteWidth] <= wdata_i[i][j*ByteWidth+:ByteWidth];
+`endif
                 end
               end
             end else begin

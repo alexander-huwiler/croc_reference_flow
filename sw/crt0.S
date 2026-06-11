@@ -33,9 +33,12 @@
 .globl _start
 .section .text._start
 _start:
-  la      sp, __stack_pointer$
   .option push
   .option norelax
+  # Keep both pointer setups as absolute/PC-relative sequences. If `la sp`
+  # relaxes to a gp-relative form before gp is initialized, startup can jump
+  # into garbage immediately.
+  la      sp, __stack_pointer$
   la      gp, __global_pointer$
   .option pop
   tail    main
