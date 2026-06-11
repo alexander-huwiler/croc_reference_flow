@@ -84,6 +84,9 @@ module tc_sram #(
 
   // memory array
   data_t sram [NumWords-1:0];
+`ifdef VERILATOR
+  data_t sram_n [NumWords-1:0];
+`endif
   // hold the read address when no read access is made
   addr_t [NumPorts-1:0] r_addr_q;
 
@@ -134,6 +137,9 @@ module tc_sram #(
           r_addr_q[i] <= {AddrWidth{1'b0}};
         end
       end else begin
+`ifdef VERILATOR
+        sram_n = sram;
+`endif
         // read value latch happens before new data is written to the sram
         for (int unsigned i = 0; i < NumPorts; i++) begin
           if (Latency != 0) begin
@@ -150,9 +156,7 @@ module tc_sram #(
               for (int unsigned j = 0; j < BeWidth; j++) begin
                 if (be_i[i][j]) begin
 `ifdef VERILATOR
-                  // Simulator workaround: keep this functional model writable in the
-                  // loop-based implementation while preserving read-before-write ordering.
-                  sram[addr_i[i]][j*ByteWidth+:ByteWidth] = wdata_i[i][j*ByteWidth+:ByteWidth];
+                  sram_n[addr_i[i]][j*ByteWidth+:ByteWidth] = wdata_i[i][j*ByteWidth+:ByteWidth];
 `else
                   sram[addr_i[i]][j*ByteWidth+:ByteWidth] <= wdata_i[i][j*ByteWidth+:ByteWidth];
 `endif
@@ -164,6 +168,9 @@ module tc_sram #(
             end
           end // if req_i
         end // for ports
+`ifdef VERILATOR
+        sram <= sram_n;
+`endif
       end // if !rst_ni
     end
   end else begin
@@ -181,6 +188,9 @@ module tc_sram #(
           end
         end
       end else begin
+`ifdef VERILATOR
+        sram_n = sram;
+`endif
         // read value latch happens before new data is written to the sram
         for (int unsigned i = 0; i < NumPorts; i++) begin
           if (Latency != 0) begin
@@ -197,9 +207,7 @@ module tc_sram #(
               for (int unsigned j = 0; j < BeWidth; j++) begin
                 if (be_i[i][j]) begin
 `ifdef VERILATOR
-                  // Simulator workaround: keep this functional model writable in the
-                  // loop-based implementation while preserving read-before-write ordering.
-                  sram[addr_i[i]][j*ByteWidth+:ByteWidth] = wdata_i[i][j*ByteWidth+:ByteWidth];
+                  sram_n[addr_i[i]][j*ByteWidth+:ByteWidth] = wdata_i[i][j*ByteWidth+:ByteWidth];
 `else
                   sram[addr_i[i]][j*ByteWidth+:ByteWidth] <= wdata_i[i][j*ByteWidth+:ByteWidth];
 `endif
@@ -211,6 +219,9 @@ module tc_sram #(
             end
           end // if req_i
         end // for ports
+`ifdef VERILATOR
+        sram <= sram_n;
+`endif
       end // if !rst_ni
     end
   end
