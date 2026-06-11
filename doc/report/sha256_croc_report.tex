@@ -1,0 +1,322 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.2cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{xcolor}
+
+\hypersetup{hidelinks}
+\setlist[itemize]{leftmargin=*, itemsep=2pt, topsep=2pt}
+\setlength{\parskip}{0.5em}
+\setlength{\parindent}{0pt}
+
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
+\title{\textbf{SHA-256 Hardware Acceleration in Croc}\\
+\large Draft Final Report Foundation}
+\author{Radu-Constantin Cretu \and Alexander Huwiler}
+\date{June 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This report documents the current implementation status of our Croc-based
+system-on-chip extension that adds a dedicated SHA-256 accelerator in the
+\texttt{user\_domain}. The project extends the baseline Croc design with new RTL,
+software support, directed functional tests, broad end-to-end verification, and
+frontend implementation checks. The accelerator exposes a memory-mapped
+programming model at \texttt{0x2000\_1000}, supports both single-block and
+multi-block chained hashing, and is complemented by the required user ROM at
+\texttt{0x2000\_0000} for automatic name readout. At the current project stage,
+all SHA-specific tests pass on a fresh Verilator rebuild. The only unresolved
+local regression item is \texttt{test\_idma}, which currently times out and must
+be rechecked on the exact ETH reference-flow environment before it is treated
+as a design regression. Backend implementation remains the next major task.
+\end{abstract}
+
+\section{Introduction}
+The goal of this project is to add a meaningful hardware improvement to the
+reference Croc SoC used throughout the VLSI 2 exercises. We chose SHA-256
+acceleration because it is a realistic workload for hardware/software
+co-design: the algorithm has a well-defined standard behavior, it is easy to
+verify against software reference implementations, and it contains a
+computationally intensive compression step that maps naturally to a custom
+datapath.
+
+Our implementation does not alter the overall Croc platform structure. Instead,
+it adds a new user-domain peripheral that the CPU can access through the
+existing OBI-based memory map. This keeps the integration effort aligned with
+the course goals: the project is not only about implementing a standalone RTL
+block, but about integrating, testing, and eventually implementing a complete
+SoC extension under realistic frontend and backend constraints.
+
+\section{System-Level Integration}
+The accelerator is integrated into the Croc \texttt{user\_domain}. The user
+address map now contains three subordinate targets:
+\begin{itemize}
+  \item an error subordinate for unmapped addresses,
+  \item a user ROM at \texttt{0x2000\_0000},
+  \item the SHA-256 accelerator at \texttt{0x2000\_1000}.
+\end{itemize}
+
+The integration is implemented in \texttt{rtl/user\_pkg.sv} and
+\texttt{rtl/user\_domain.sv}. A dedicated OBI demultiplexer routes requests to
+either the ROM or the accelerator. The SHA block raises an interrupt through
+\texttt{interrupts\_o[0]}, which appears as \texttt{IRQ\_SHA256\_ACCEL = 20} on
+the software side.
+
+The user ROM was added to satisfy the project requirement that the fabricated
+chip must be able to output the students' names from the start of the user
+domain. The ROM returns the zero-terminated string
+\texttt{"Radu-Constantin Cretu, Alexander Huwiler"} in little-endian 32-bit
+words, which allows the software infrastructure to read and print it as a C
+string.
+
+\section{SHA-256 Accelerator Architecture}
+\subsection{Programming Model}
+The software-visible programming model is defined in
+\texttt{rtl/sha256/sha256\_accel\_pkg.sv},
+\texttt{sw/lib/inc/sha256\_accel.h}, and
+\texttt{sw/lib/src/sha256\_accel.c}. The register map is intentionally compact:
+
+\begin{itemize}
+  \item \texttt{CTRL} at offset \texttt{0x00}
+  \item \texttt{STATUS} at offset \texttt{0x04}
+  \item \texttt{INFO} at offset \texttt{0x08}
+  \item \texttt{BLOCK[0..15]} at offsets \texttt{0x40} to \texttt{0x7C}
+  \item \texttt{DIGEST[0..7]} at offsets \texttt{0x80} to \texttt{0x9C}
+\end{itemize}
+
+The control register implements three bits:
+\begin{itemize}
+  \item \texttt{START}: launch a new compression,
+  \item \texttt{IRQ\_EN}: enable completion interrupts,
+  \item \texttt{CHAIN}: continue hashing from the previously computed internal
+  state.
+\end{itemize}
+
+The status register reports:
+\begin{itemize}
+  \item \texttt{READY},
+  \item \texttt{BUSY},
+  \item \texttt{DONE},
+  \item \texttt{DIGEST\_VALID},
+  \item \texttt{IRQ\_PENDING},
+  \item \texttt{START\_ERR}.
+\end{itemize}
+
+This interface allows software to write one fully padded 512-bit block, start a
+fresh hash or a chained continuation, wait for completion by polling or by
+interrupt, and then read back the resulting 256-bit digest.
+
+\subsection{Datapath and Control Strategy}
+The accelerator uses a compact iterative architecture. It is not unrolled and
+not pipelined. Each \texttt{START} command performs one SHA-256 compression over
+64 rounds, with one round executed per cycle. This keeps the design small and
+appropriate for integration into the fixed project area.
+
+The core hardware state consists of:
+\begin{itemize}
+  \item 16 block input registers for the current 512-bit message block,
+  \item 8 digest registers for the externally visible 256-bit result,
+  \item 8 chaining state registers that hold the current hash state across
+  chained blocks,
+  \item 8 working registers \texttt{a} through \texttt{h},
+  \item a 6-bit round counter,
+  \item a 16-word rolling message-schedule buffer.
+\end{itemize}
+
+When software issues a fresh \texttt{START}, the internal state is initialized
+to the standard SHA-256 IV. When software issues \texttt{START} together with
+\texttt{CHAIN}, the core resumes from the previously stored chaining state.
+After round 63, the final working values are added to the current hash state,
+the digest registers are updated, and the completion flags are asserted.
+
+Padding is currently performed in software. This means the hardware is
+responsible for the compression function and state chaining, while the software
+runtime is responsible for turning arbitrary-length messages into one or more
+properly padded 512-bit blocks.
+
+\section{Software Support}
+To make the accelerator usable from bare-metal software, we added a small
+driver library and several dedicated tests in the reference-flow software tree.
+The driver provides helpers to:
+\begin{itemize}
+  \item read and write control and status registers,
+  \item write complete message blocks,
+  \item start fresh or chained operations,
+  \item wait for completion,
+  \item read the final digest,
+  \item hash one or several blocks through a higher-level API.
+\end{itemize}
+
+One driver detail that required special care is the \texttt{START\_ERR} status
+handling. A start command issued while the accelerator is already busy raises
+\texttt{START\_ERR}, but this should not cause the software wait loop to return
+prematurely while the current valid operation is still running. The final driver
+implementation therefore waits until either a true completion is observed or a
+standalone start error is reported while the accelerator is no longer busy.
+
+\section{Verification Strategy}
+\subsection{Directed Functional Tests}
+The SHA-specific verification suite is implemented in
+\texttt{sw/test/}. The most important directed tests are summarized in
+Table~\ref{tab:tests}.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabularx}{\textwidth}{@{}lYY@{}}
+\toprule
+Test & Purpose & Current result \\
+\midrule
+\texttt{test\_sha256\_accel} & Basic one-block hash using the standard padded
+\texttt{"abc"} test case & Pass \\
+\texttt{test\_sha256\_accel\_api} & Exercise the software driver API for both
+single-block and multi-block use & Pass \\
+\texttt{test\_sha256\_accel\_multiblock} & Verify explicit chained hashing over
+multiple message blocks & Pass \\
+\texttt{test\_sha256\_accel\_irq} & Verify interrupt enable, pending, and
+completion behavior & Pass \\
+\texttt{test\_sha256\_accel\_mmio} & Verify block-register writes, byte enables,
+status clearing, and control-register semantics & Pass \\
+\texttt{test\_sha256\_accel\_restart} & Verify restart behavior, invalid
+restarts while busy, and reset to the SHA-256 IV & Pass \\
+\texttt{test\_sha256\_accel\_vectors} & Compare against several known vectors,
+including boundary-length cases around SHA padding transitions & Pass \\
+\texttt{test\_user\_rom} & Verify correct readout of the required student-name
+string from the user ROM & Pass \\
+\bottomrule
+\end{tabularx}
+\caption{Directed verification tests for the new functionality.}
+\label{tab:tests}
+\end{table}
+
+\subsection{Broad End-to-End Coverage}
+In addition to directed tests, we added a broad end-to-end regression
+(\texttt{test\_sha256\_accel\_end\_to\_end}) that compares the hardware result
+against an in-test software SHA-256 reference implementation. This test builds
+properly padded messages in software and then validates the accelerator over a
+large set of automatically generated cases.
+
+The current sweep covers:
+\begin{itemize}
+  \item all message lengths from 0 to 160 bytes for pattern 0,
+  \item all message lengths from 0 to 160 bytes for pattern 1,
+  \item twelve additional lengths up to 255 bytes for both patterns 0 and 1,
+  \item 33 boundary-focused cases for pattern 2, including 55, 56, 57, 63, 64,
+  65, 119, 120, 121, 127, 128, 129, 191, 192, 193, and 255 bytes.
+\end{itemize}
+
+This corresponds to 379 distinct end-to-end message cases. On the rebuilt local
+Verilator setup, the test passes functionally but requires a large timeout
+budget because it performs a broad sweep and recomputes a software reference
+digest for every case.
+
+\subsection{Baseline Regression Status}
+We also reran the standard non-SHA regression tests on a freshly rebuilt
+Verilator model. The following baseline tests pass on the current branch:
+\texttt{helloworld}, \texttt{print\_config}, \texttt{test\_clint},
+\texttt{test\_compute}, \texttt{test\_gpio}, \texttt{test\_interrupts},
+\texttt{test\_obi\_timer}, \texttt{test\_soc\_ctrl}, and \texttt{test\_uart}.
+
+The only unresolved regression item in the local simulation environment is
+\texttt{test\_idma}, which times out even with a long timeout budget. At this
+point we do not interpret that as evidence of a SHA-induced bug. The SHA
+changes are confined to the user-domain address map and the dedicated user
+interrupt path, while the iDMA block remains in the Croc domain. The next step
+for this item is to rerun \texttt{test\_idma} on a clean, unmodified
+reference-flow setup on the ETH environment and classify it as either a
+pre-existing local simulation issue or a regression that needs further
+debugging.
+
+\section{Frontend Checks}
+On the exact reference-flow \texttt{port-sha} branch, we ran a fresh Yosys
+frontend and elaboration check using the recovered local toolchain. The design
+parses successfully through \texttt{yosys-slang}, the hierarchy is built, and
+process conversion completes without a Yosys error. This gives us a current
+frontend checkpoint on the correct project tree before backend starts.
+
+We also rebuilt the Verilator model from scratch in the same environment. This
+was important because an older stale build directory had been generated against
+a different local Verilator installation path. After removing the stale build
+artifacts, the simulator rebuilt successfully and all SHA-relevant tests were
+rerun on a fresh binary.
+
+\section{Performance Evaluation}
+To obtain an initial performance datapoint, we benchmarked the standard padded
+\texttt{"abc"} block over 64 iterations in simulation. The current result is
+summarized in Table~\ref{tab:perf}.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabularx}{0.8\textwidth}{@{}lrr@{}}
+\toprule
+Metric & Hardware & Software \\
+\midrule
+Total cycles for 64 hashes & 24\,065 & 355\,136 \\
+Cycles per hash & 376 & 5\,549 \\
+\bottomrule
+\end{tabularx}
+\caption{Current one-block benchmark result for the padded \texttt{"abc"} case,
+measured in simulation cycles.}
+\label{tab:perf}
+\end{table}
+
+This corresponds to an observed speedup of about 14.8x for the accelerator over
+the software-only implementation on the Croc CPU. While this is only one
+benchmark point, it already demonstrates that the project produces a measurable
+system-level improvement and not merely a functional hardware addition.
+
+\section{Backend Status and Remaining Work}
+At the current project stage, the design is ready to move into backend on the
+proper ETH reference-flow setup. The remaining implementation work is:
+\begin{itemize}
+  \item exact reference-flow synthesis with the technology libraries installed
+  through the ETH environment,
+  \item OpenROAD floorplanning, placement, clock-tree synthesis, routing, and
+  finishing,
+  \item KLayout GDS generation and final DRC/LVS closure,
+  \item post-synthesis and, if feasible, post-layout sanity simulation,
+  \item collection of final area, timing, and manufacturability results.
+\end{itemize}
+
+On the local machine, we currently have Yosys, Verilator, and OpenSTA
+available, but not the full technology and OpenROAD setup required to complete
+the exact final backend flow. For this reason, the next backend runs should be
+performed on the ETH reference-flow environment with the correct technology
+installation.
+
+\section{Conclusion}
+So far, the project has progressed well beyond the idea stage. We have:
+\begin{itemize}
+  \item integrated a SHA-256 accelerator into the Croc user domain,
+  \item added the required user ROM for name readout,
+  \item implemented the software driver and bare-metal test support,
+  \item verified the design through directed tests and a broad end-to-end
+  regression,
+  \item measured a clear hardware speedup over the software baseline,
+  \item established a fresh frontend verification checkpoint on the reference
+  flow.
+\end{itemize}
+
+The main remaining work is now backend implementation and final physical
+verification. From a frontend perspective, the SHA-specific functionality is in
+a defensible state for the backend phase to begin.
+
+% Suggested insertions for the final version:
+% - system-level user_domain block diagram
+% - internal sha256_accel datapath/control diagram
+% - backend plots and final area/timing tables
+
+\end{document}
