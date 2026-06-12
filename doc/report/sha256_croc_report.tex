@@ -253,30 +253,42 @@ artifacts, the simulator rebuilt successfully and all SHA-relevant tests were
 rerun on a fresh binary.
 
 \section{Performance Evaluation}
-To obtain an initial performance datapoint, we benchmarked the standard padded
-\texttt{"abc"} block over 64 iterations in simulation. The current result is
-summarized in Table~\ref{tab:perf}.
+To evaluate performance more defensibly than with a single short-message
+example, we benchmarked both the hardware path and a software-only SHA-256
+reference over a set of message lengths that exercise important padding and
+multi-block boundaries. In this comparison, both paths include software-side
+message padding and block preparation; the hardware path then offloads only the
+compression and chaining steps to the accelerator. The resulting per-hash cycle
+counts are summarized in Table~\ref{tab:perf}.
 
 \begin{table}[t]
 \centering
 \small
-\begin{tabularx}{0.8\textwidth}{@{}lrr@{}}
+\begin{tabularx}{\textwidth}{@{}rrrrr@{}}
 \toprule
-Metric & Hardware & Software \\
+Length [B] & Blocks & HW cyc/hash & SW cyc/hash & Speedup \\
 \midrule
-Total cycles for 64 hashes & 24\,065 & 355\,136 \\
-Cycles per hash & 376 & 5\,549 \\
+3   & 1 & 1\,377 & 7\,055  & 5.12x \\
+55  & 1 & 2\,729 & 8\,407  & 3.08x \\
+56  & 2 & 3\,050 & 13\,936 & 4.57x \\
+64  & 2 & 3\,258 & 14\,144 & 4.34x \\
+128 & 3 & 5\,217 & 21\,311 & 4.08x \\
+255 & 5 & 9\,109 & 35\,619 & 3.91x \\
 \bottomrule
 \end{tabularx}
-\caption{Current one-block benchmark result for the padded \texttt{"abc"} case,
-measured in simulation cycles.}
+\caption{Current benchmark results measured in simulation cycles for selected
+message lengths. Both hardware and software paths include software-side padding
+and block preparation.}
 \label{tab:perf}
 \end{table}
 
-This corresponds to an observed speedup of about 14.8x for the accelerator over
-the software-only implementation on the Croc CPU. While this is only one
-benchmark point, it already demonstrates that the project produces a measurable
-system-level improvement and not merely a functional hardware addition.
+These results show a consistent accelerator speedup across all tested message
+lengths, with the strongest gain on very short inputs and a still clear
+advantage on longer multi-block messages. The transition from 55 to 56 bytes is
+particularly useful because it crosses the SHA-256 padding boundary from one
+block to two blocks; the expected cost increase is visible in both the hardware
+and software measurements. Overall, the current implementation provides a real
+system-level improvement rather than only a functional hardware addition.
 
 \section{Backend Status and Remaining Work}
 At the current project stage, the design is ready to move into backend on the

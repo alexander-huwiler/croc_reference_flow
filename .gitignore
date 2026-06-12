@@ -80,3 +80,5 @@
 #/openroad/src
 #yosys
 /yosys/out
+#verilator
+/verilator/testlogs
