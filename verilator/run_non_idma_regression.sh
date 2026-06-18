@@ -18,7 +18,11 @@ for bin in ../sw/bin/helloworld.hex ../sw/bin/test/*.hex; do
     continue
   fi
 
-  if timeout 300 ./obj_dir/Vtb_croc_soc +binary="${bin}" >"${log}" 2>&1; then
+  timeout_s=300
+  if [[ "${name}" == "test_sha256_accel_end_to_end" || "${name}" == "test_sha256_sw_bench" ]]; then
+    timeout_s=900
+  fi
+  if timeout "${timeout_s}" ./obj_dir/Vtb_croc_soc +binary="${bin}" >"${log}" 2>&1; then
     if grep -q "Simulation finished: SUCCESS" "${log}"; then
       echo "PASS ${name}"
     else

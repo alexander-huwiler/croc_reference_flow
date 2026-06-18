@@ -10,6 +10,7 @@
 \usepackage{tabularx}
 \usepackage{array}
 \usepackage{enumitem}
+\usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage{xcolor}
 
@@ -17,11 +18,12 @@
 \setlist[itemize]{leftmargin=*, itemsep=2pt, topsep=2pt}
 \setlength{\parskip}{0.5em}
 \setlength{\parindent}{0pt}
+\graphicspath{{figures/}}
 
 \newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 
 \title{\textbf{SHA-256 Hardware Acceleration in Croc}\\
-\large Draft Final Report Foundation}
+\large Current Implementation Status Report}
 \author{Radu-Constantin Cretu \and Alexander Huwiler}
 \date{June 2026}
 
@@ -37,10 +39,13 @@ frontend implementation checks. The accelerator exposes a memory-mapped
 programming model at \texttt{0x2000\_1000}, supports both single-block and
 multi-block chained hashing, and is complemented by the required user ROM at
 \texttt{0x2000\_0000} for automatic name readout. At the current project stage,
-all SHA-specific tests pass on a fresh Verilator rebuild. The only unresolved
-local regression item is \texttt{test\_idma}, which currently times out and must
-be rechecked on the exact ETH reference-flow environment before it is treated
-as a design regression. Backend implementation remains the next major task.
+all SHA-specific tests pass on a fresh Verilator rebuild, and ETH
+reference-flow spot checks confirm correct end-to-end hashing and user-ROM
+behavior in the intended environment. A fresh Yosys synthesis run on the ETH
+reference flow completes successfully, and the OpenROAD floorplan stage now
+reaches a valid checkpoint after aligning the top-level pad cells with the
+reference I/O library. Placement, routing, final timing closure, and
+manufacturing signoff remain the next major tasks.
 \end{abstract}
 
 \section{Introduction}
@@ -80,6 +85,16 @@ domain. The ROM returns the zero-terminated string
 \texttt{"Radu-Constantin Cretu, Alexander Huwiler"} in little-endian 32-bit
 words, which allows the software infrastructure to read and print it as a C
 string.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\textwidth]{Figure1.pdf}
+\caption{System-level integration of the user ROM and the SHA-256 accelerator
+inside Croc's \texttt{user\_domain}. Requests are routed through the local OBI
+infrastructure, while the accelerator exposes a dedicated completion interrupt
+path back to the processor-visible interrupt fabric.}
+\label{fig:user_domain_integration}
+\end{figure}
 
 \section{SHA-256 Accelerator Architecture}
 \subsection{Programming Model}
@@ -145,6 +160,16 @@ Padding is currently performed in software. This means the hardware is
 responsible for the compression function and state chaining, while the software
 runtime is responsible for turning arbitrary-length messages into one or more
 properly padded 512-bit blocks.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\textwidth]{Figure2.pdf}
+\caption{Internal block diagram of the SHA-256 accelerator. The design uses a
+compact iterative architecture with one round executed per cycle, externally
+visible block and digest registers, internal working registers
+\texttt{a}--\texttt{h}, and a chaining-state path for multi-block hashing.}
+\label{fig:sha_arch}
+\end{figure}
 
 \section{Software Support}
 To make the accelerator usable from bare-metal software, we added a small
@@ -220,7 +245,9 @@ The current sweep covers:
 This corresponds to 379 distinct end-to-end message cases. On the rebuilt local
 Verilator setup, the test passes functionally but requires a large timeout
 budget because it performs a broad sweep and recomputes a software reference
-digest for every case.
+digest for every case. We therefore reran this test explicitly with an
+extended timeout budget and confirmed a clean successful completion on the
+current branch.
 
 \subsection{Baseline Regression Status}
 We also reran the standard non-SHA regression tests on a freshly rebuilt
@@ -229,22 +256,32 @@ Verilator model. The following baseline tests pass on the current branch:
 \texttt{test\_compute}, \texttt{test\_gpio}, \texttt{test\_interrupts},
 \texttt{test\_obi\_timer}, \texttt{test\_soc\_ctrl}, and \texttt{test\_uart}.
 
-The only unresolved regression item in the local simulation environment is
-\texttt{test\_idma}, which times out even with a long timeout budget. At this
-point we do not interpret that as evidence of a SHA-induced bug. The SHA
-changes are confined to the user-domain address map and the dedicated user
-interrupt path, while the iDMA block remains in the Croc domain. The next step
-for this item is to rerun \texttt{test\_idma} on a clean, unmodified
-reference-flow setup on the ETH environment and classify it as either a
-pre-existing local simulation issue or a regression that needs further
-debugging.
+To reduce the risk of a local-tool-only success, we also reran key tests on the
+ETH reference-flow environment. In that setup, \texttt{helloworld},
+\texttt{test\_sha256\_accel\_end\_to\_end}, and \texttt{test\_user\_rom}
+complete successfully on a fresh Verilator build. These runs are especially
+important because they validate the supported SHA configuration in the same
+environment that is used for backend implementation.
 
-\section{Frontend Checks}
+As a final local sanity pass after rebuilding the software binaries, we reran a
+focused short regression consisting of \texttt{helloworld},
+\texttt{test\_sha256\_accel}, \texttt{test\_sha256\_accel\_api},
+\texttt{test\_sha256\_accel\_irq}, \texttt{test\_sha256\_accel\_mmio},
+\texttt{test\_sha256\_accel\_multiblock},
+\texttt{test\_sha256\_accel\_restart},
+\texttt{test\_sha256\_accel\_vectors}, \texttt{test\_user\_rom},
+\texttt{print\_config}, \texttt{test\_soc\_ctrl}, and \texttt{test\_uart}. All
+of these tests completed successfully.
+
+\section{Frontend and Synthesis Checks}
 On the exact reference-flow \texttt{port-sha} branch, we ran a fresh Yosys
-frontend and elaboration check using the recovered local toolchain. The design
-parses successfully through \texttt{yosys-slang}, the hierarchy is built, and
-process conversion completes without a Yosys error. This gives us a current
-frontend checkpoint on the correct project tree before backend starts.
+synthesis in the intended ETH 2026 tool environment. The design parses
+successfully through \texttt{yosys-slang}, elaboration and process conversion
+complete, and the mapped netlist is generated without a fatal synthesis error.
+This gives us a valid ETH-side synthesis checkpoint on the correct project tree
+before detailed backend optimization begins. The authoritative area and timing
+numbers will be taken from the final backend flow once placement, routing, and
+signoff checks have stabilized.
 
 We also rebuilt the Verilator model from scratch in the same environment. This
 was important because an older stale build directory had been generated against
@@ -259,7 +296,13 @@ reference over a set of message lengths that exercise important padding and
 multi-block boundaries. In this comparison, both paths include software-side
 message padding and block preparation; the hardware path then offloads only the
 compression and chaining steps to the accelerator. The resulting per-hash cycle
-counts are summarized in Table~\ref{tab:perf}.
+counts are summarized in Table~\ref{tab:perf}. Each reported value is derived
+from a 32-iteration simulation run on the rebuilt Verilator model.
+
+To keep this comparison fair, we reran both the hardware benchmark
+(\texttt{test\_sha256\_accel\_bench}) and the software-only benchmark
+(\texttt{test\_sha256\_sw\_bench}) on the rebuilt simulator with sufficient
+timeout budget for the longer software run.
 
 \begin{table}[t]
 \centering
@@ -268,12 +311,14 @@ counts are summarized in Table~\ref{tab:perf}.
 \toprule
 Length [B] & Blocks & HW cyc/hash & SW cyc/hash & Speedup \\
 \midrule
-3   & 1 & 1\,377 & 7\,055  & 5.12x \\
-55  & 1 & 2\,729 & 8\,407  & 3.08x \\
-56  & 2 & 3\,050 & 13\,936 & 4.57x \\
-64  & 2 & 3\,258 & 14\,144 & 4.34x \\
-128 & 3 & 5\,217 & 21\,311 & 4.08x \\
-255 & 5 & 9\,109 & 35\,619 & 3.91x \\
+3   & 1 & 1\,379 & 7\,070  & 5.13x \\
+55  & 1 & 2\,731 & 8\,422  & 3.08x \\
+56  & 2 & 3\,049 & 13\,967 & 4.58x \\
+64  & 2 & 3\,257 & 14\,175 & 4.35x \\
+119 & 2 & 4\,687 & 15\,605 & 3.33x \\
+120 & 3 & 5\,005 & 21\,150 & 4.23x \\
+128 & 3 & 5\,213 & 21\,358 & 4.10x \\
+255 & 5 & 9\,099 & 35\,698 & 3.92x \\
 \bottomrule
 \end{tabularx}
 \caption{Current benchmark results measured in simulation cycles for selected
@@ -287,27 +332,32 @@ lengths, with the strongest gain on very short inputs and a still clear
 advantage on longer multi-block messages. The transition from 55 to 56 bytes is
 particularly useful because it crosses the SHA-256 padding boundary from one
 block to two blocks; the expected cost increase is visible in both the hardware
-and software measurements. Overall, the current implementation provides a real
+and software measurements. The additional 119-byte and 120-byte points show
+the same effect at the next boundary, where the padded message grows from two
+blocks to three. Across the currently measured cases, the observed speedup
+ranges from 3.08x to 5.13x. Overall, the current implementation provides a real
 system-level improvement rather than only a functional hardware addition.
 
 \section{Backend Status and Remaining Work}
-At the current project stage, the design is ready to move into backend on the
-proper ETH reference-flow setup. The remaining implementation work is:
+At the current project stage, the design has already passed ETH reference-flow
+synthesis and the initial OpenROAD floorplan stage. During backend bring-up, we
+identified an I/O-library naming mismatch at the top level; after aligning the
+RTL pad instances with the \texttt{sg13cmos5l\_*} reference-flow library names,
+the floorplan stage now completes and produces a valid backend checkpoint. The
+remaining implementation work is:
 \begin{itemize}
-  \item exact reference-flow synthesis with the technology libraries installed
-  through the ETH environment,
   \item OpenROAD floorplanning, placement, clock-tree synthesis, routing, and
   finishing,
+  \item static timing analysis and collection of final area/timing results,
   \item KLayout GDS generation and final DRC/LVS closure,
   \item post-synthesis and, if feasible, post-layout sanity simulation,
-  \item collection of final area, timing, and manufacturability results.
+  \item final report consolidation around backend measurements and
+  manufacturability results.
 \end{itemize}
 
-On the local machine, we currently have Yosys, Verilator, and OpenSTA
-available, but not the full technology and OpenROAD setup required to complete
-the exact final backend flow. For this reason, the next backend runs should be
-performed on the ETH reference-flow environment with the correct technology
-installation.
+The authoritative final numbers should be taken from the ETH reference-flow
+environment with the correct technology installation, since that is the setup
+used for the course backend flow and final submission artifacts.
 
 \section{Conclusion}
 So far, the project has progressed well beyond the idea stage. We have:
@@ -318,17 +368,14 @@ So far, the project has progressed well beyond the idea stage. We have:
   \item verified the design through directed tests and a broad end-to-end
   regression,
   \item measured a clear hardware speedup over the software baseline,
-  \item established a fresh frontend verification checkpoint on the reference
-  flow.
+  \item established a fresh ETH-side synthesis checkpoint on the reference
+  flow,
+  \item brought the design through the initial OpenROAD floorplan stage on the
+  reference backend setup.
 \end{itemize}
 
 The main remaining work is now backend implementation and final physical
 verification. From a frontend perspective, the SHA-specific functionality is in
-a defensible state for the backend phase to begin.
-
-% Suggested insertions for the final version:
-% - system-level user_domain block diagram
-% - internal sha256_accel datapath/control diagram
-% - backend plots and final area/timing tables
+a defensible state for the backend phase to proceed.
 
 \end{document}

@@ -13,7 +13,7 @@
 #define MAX_MSG_LEN        255u
 #define MAX_BLOCKS         5u
 
-static const uint32_t bench_lengths[] = {3u, 55u, 56u, 64u, 128u, 255u};
+static const uint32_t bench_lengths[] = {3u, 55u, 56u, 64u, 119u, 120u, 128u, 255u};
 
 static uint8_t bench_msg[MAX_MSG_LEN];
 static uint32_t bench_blocks[MAX_BLOCKS][16];
