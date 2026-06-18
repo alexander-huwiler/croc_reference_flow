@@ -66,6 +66,9 @@ utl::report "###################################################################
 
 set_thread_count 8
 
+# Changed: Additional padding to give the router whitespace around every cell
+set_placement_padding -global -left 1 -right 1
+
 # global_placement parameters:
 # density:            In every part of the chip, about N% of the area is occupied by standard cells
 # routability_driven: Reduce density target when there are a lot of wires in an area
@@ -75,7 +78,10 @@ set_thread_count 8
 
 # Rough placement to get parasitics from steiner-tree estimate so we can run repair_timing
 utl::report "Global Placement (1)"
-global_placement -density 0.60
+
+# CHANGED -density: 0.60 ->  0.55
+global_placement -density 0.55 
+
 report_metrics "02-02_${proj_name}.gpl1"
 report_image "02-02_${proj_name}.gpl1" true true
 save_checkpoint 02-02_${proj_name}.gpl1
@@ -92,7 +98,9 @@ save_checkpoint 02-02_${proj_name}.gpl1_repaired
 
 # Actual global placement with routability and timing driven
 utl::report "Global Placement (2)"
-global_placement -density 0.60 \
+
+# CHANGED -density: 0.60 ->  0.55
+global_placement -density 0.55 \
                  -routability_driven \
                  -routability_check_overflow 0.30 \
                  -timing_driven
